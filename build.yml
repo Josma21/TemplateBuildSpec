@@ -1,0 +1,74 @@
+stages:     
+
+- stage: pool
+  
+  jobs: 
+  - job: 
+    displayName: Agent
+    pool:
+      vmImage: ubuntu-20.04
+
+    steps: 
+
+    - task: DockerInstaller@0
+      displayName: 'Install Docker '
+      inputs:
+        dockerVersion: 19.03.12
+
+    - task: DownloadPackage@1
+      displayName: 'Descargar el artefacto de configuración de Maven'
+      inputs:
+        packageType: upack
+        feed: '696f6afc-6f50-4ced-a4ab-1dac4a15b8c7/55c4780b-6598-465e-9c67-574877eef72e'
+        definition: '915f5e2e-673d-42a3-ac50-8692b9f26d7d'
+        version: 1.0.0
+        downloadPath: /home/vsts/.m2
+
+    - task: Maven@3
+      displayName: 'Build specification'
+      inputs:
+        mavenPomFile: 'bncr-notification-sms-specification/pom.xml'
+        goals: 'clean install'
+        options: '-Dmaven.test.skip=true'
+
+    - task: Docker@2
+      displayName: login
+      inputs:
+        containerRegistry: 'ACR-Produccion'
+        command: login
+
+    - task: CmdLine@2
+      displayName: 'Get Project Ver.'
+      inputs:
+        script: |
+          cd $(System.DefaultWorkingDirectory)/bncr-limits-service-image/
+          v=$(mvn help:evaluate -Dexpression=project.version -q -DforceStdout)
+          echo $v
+          echo "##vso[task.setvariable variable=PROJECT_VERSION;]$v"
+
+    - task: CmdLine@2
+      displayName: 'Put Project Ver.'
+      inputs:
+        script: |
+          echo "Project version No. $PROJECT_VERSION" 
+
+    - task: PowerShell@2
+      displayName: Set Global Version
+      inputs:
+        targetType: 'inline'
+        script: |
+          echo $(AT) | az devops login
+          az pipelines variable-group variable update --group-id 9 --name BNCR_LIMITS_SERVICE_VERSION_DEVELOP --value $env:PROJECT_VERSION --org https://dev.azure.com/vstsbncr-backoffice --project “BancaDigitalOmnicanal”
+
+    - task: Maven@3
+      displayName: 'Create image'
+      inputs:
+        mavenPomFile: 'bncr-notification-sms-services/pom.xml'
+        goals: 'package -Pdocker-image -Ddocker.repo.url=omnicanalidadv100bncrcontreg.azurecr.io -Ddocker.repo.project=bncr -Ddocker.repo.env=prod'
+        options: '-Dmaven.test.skip=true'
+        
+    - task: PublishBuildArtifacts@1
+      displayName: 'Save Helm Folder as Artifact'
+      inputs:
+        PathtoPublish: helm
+        ArtifactName: helm
